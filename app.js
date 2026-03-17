@@ -20,6 +20,12 @@
  * - Calm Belt added: entering it kills the ship, shows alert, and respawns elsewhere.
  * - Map text / dashed lines are treated as water so ship can pass over them.
  * - Spawn / respawn always starts outside Calm Belt and outside Grand Line.
+ *
+ * UI update:
+ * - Main control HUD is FIXED on screen (top-right).
+ * - D-pad is SEPARATE and floats at the bottom.
+ * - Buttons no longer follow the ship.
+ * - Center-ship button near D-pad always stays visible, even when controls are hidden.
  */
 
 import * as THREE from "three";
@@ -35,6 +41,16 @@ const toggleLabelsBtn = document.getElementById("toggleLabels");
 const toggleRoutesBtn = document.getElementById("toggleRoutes");
 const toggleAutoSpinBtn = document.getElementById("toggleAutoSpin");
 const resetCameraBtn = document.getElementById("resetCamera");
+
+/** Ship HUD + master toggle + D-pad */
+let shipHudEl = document.getElementById("shipHud");
+let toggleAllUiBtn = document.getElementById("toggleAllUi");
+const controlsPanelEl = document.getElementById("controlsPanel");
+
+const moveUpBtn = document.getElementById("moveUp");
+const moveDownBtn = document.getElementById("moveDown");
+const moveLeftBtn = document.getElementById("moveLeft");
+const moveRightBtn = document.getElementById("moveRight");
 
 const infoCardEl = document.getElementById("infoCard");
 const closeCardBtn = document.getElementById("closeCard");
@@ -54,10 +70,312 @@ function hideCard() {
 }
 closeCardBtn?.addEventListener("click", hideCard);
 
-if (toggleRoutesBtn) {
-  toggleRoutesBtn.style.display = "none";
-  toggleRoutesBtn.replaceWith(toggleRoutesBtn.cloneNode(true));
+toggleRoutesBtn?.remove();
+
+/** -----------------------------
+ * Fixed HUD + floating D-pad layout
+ * ------------------------------ */
+let floatingDpadEl = null;
+
+let centerShipBtn = null;
+let centerShipLerp = 0;
+
+function centerShipInView(immediate = false) {
+  if (!boat || !globeGroup || !camera) return;
+
+  // Ship position in world space
+  const shipWorld = new THREE.Vector3();
+  boat.getWorldPosition(shipWorld);
+
+  // Direction from globe center to ship
+  const shipDir = shipWorld.clone().normalize();
+  if (shipDir.lengthSq() < 1e-8) return;
+
+  // Direction from globe center toward the camera
+  const cameraDir = camera.position.clone().normalize();
+  if (cameraDir.lengthSq() < 1e-8) return;
+
+  // Rotate globe so ship faces camera
+  const deltaQuat = new THREE.Quaternion().setFromUnitVectors(shipDir, cameraDir);
+  const targetQuat = deltaQuat.clone().multiply(globeGroup.quaternion);
+
+  if (immediate) {
+    globeGroup.quaternion.copy(targetQuat);
+    globeGroup.userData.targetQuaternion = null;
+    centerShipLerp = 0;
+    controls.update();
+    return;
+  }
+
+  globeGroup.userData.targetQuaternion = targetQuat;
+  centerShipLerp = 1;
 }
+
+function applyFixedUiStyles() {
+  const style = document.createElement("style");
+  style.id = "fixed-ui-runtime-style";
+  style.textContent = `
+    #shipHud {
+      position: fixed !important;
+      top: 16px !important;
+      right: 16px !important;
+      left: auto !important;
+      bottom: auto !important;
+      transform: none !important;
+      z-index: 30 !important;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 8px;
+      max-width: min(520px, calc(100vw - 32px));
+    }
+
+    #shipHud > * {
+      pointer-events: auto;
+    }
+
+    #toggleAllUi {
+      pointer-events: auto !important;
+    }
+
+    #controlsPanel {
+      margin-top: 0 !important;
+    }
+
+    #floatingDpad {
+      position: fixed;
+      left: 50%;
+      bottom: 18px;
+      transform: translateX(-50%);
+      z-index: 31;
+      pointer-events: auto;
+      display: grid;
+      grid-template-columns: 56px 56px 56px;
+      grid-template-rows: 56px 56px 56px;
+      gap: 8px;
+      justify-content: center;
+      align-items: center;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    #floatingDpad .dpad-btn {
+      width: 56px;
+      height: 56px;
+      padding: 0;
+      border-radius: 16px;
+      font-size: 20px;
+      line-height: 1;
+      touch-action: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #floatingDpad .up { grid-column: 2; grid-row: 1; }
+    #floatingDpad .left { grid-column: 1; grid-row: 2; }
+    #floatingDpad .center-ship { grid-column: 2; grid-row: 2; }
+    #floatingDpad .right { grid-column: 3; grid-row: 2; }
+    #floatingDpad .down { grid-column: 2; grid-row: 3; }
+
+    @media (max-width: 900px) {
+      #shipHud {
+        top: 12px !important;
+        right: 12px !important;
+        max-width: calc(100vw - 24px);
+      }
+
+      #floatingDpad {
+        bottom: 14px;
+        grid-template-columns: 52px 52px 52px;
+        grid-template-rows: 52px 52px 52px;
+        gap: 7px;
+      }
+
+      #floatingDpad .dpad-btn {
+        width: 52px;
+        height: 52px;
+      }
+    }
+  `;
+  if (!document.getElementById(style.id)) {
+    document.head.appendChild(style);
+  }
+}
+
+function ensureShipHud() {
+  if (!shipHudEl) {
+    shipHudEl = document.createElement("div");
+    shipHudEl.id = "shipHud";
+    (globeEl?.parentElement || document.body).appendChild(shipHudEl);
+  }
+
+  if (!toggleAllUiBtn) {
+    toggleAllUiBtn = document.createElement("button");
+    toggleAllUiBtn.id = "toggleAllUi";
+    toggleAllUiBtn.type = "button";
+    toggleAllUiBtn.textContent = "Hide Controls";
+    shipHudEl.appendChild(toggleAllUiBtn);
+  }
+
+  shipHudEl.style.position = "fixed";
+  shipHudEl.style.top = "16px";
+  shipHudEl.style.right = "16px";
+  shipHudEl.style.left = "auto";
+  shipHudEl.style.bottom = "auto";
+  shipHudEl.style.transform = "none";
+  shipHudEl.style.pointerEvents = "none";
+  shipHudEl.style.zIndex = "30";
+}
+
+function buildFloatingDpad() {
+  let dpad = document.getElementById("floatingDpad");
+  if (!dpad) {
+    dpad = document.createElement("div");
+    dpad.id = "floatingDpad";
+    dpad.setAttribute("aria-label", "Move Ship");
+    (document.getElementById("app") || document.body).appendChild(dpad);
+  }
+
+  dpad.innerHTML = "";
+
+  const ensureButton = (btn, id, label, cls, text) => {
+    if (!btn) {
+      const newBtn = document.createElement("button");
+      newBtn.id = id;
+      newBtn.type = "button";
+      newBtn.className = `dpad-btn ${cls}`;
+      newBtn.setAttribute("aria-label", label);
+      newBtn.textContent = text;
+      dpad.appendChild(newBtn);
+      return newBtn;
+    }
+
+    btn.className = `dpad-btn ${cls}`;
+    btn.setAttribute("aria-label", label);
+    btn.textContent = text;
+    dpad.appendChild(btn);
+    return btn;
+  };
+
+  const up = ensureButton(moveUpBtn, "moveUp", "Move Up", "up", "▲");
+  const left = ensureButton(moveLeftBtn, "moveLeft", "Move Left", "left", "◀");
+
+  centerShipBtn = document.createElement("button");
+  centerShipBtn.id = "centerShipBtn";
+  centerShipBtn.type = "button";
+  centerShipBtn.className = "dpad-btn center-ship";
+  centerShipBtn.setAttribute("aria-label", "Show Ship");
+  centerShipBtn.title = "Show Ship";
+  centerShipBtn.textContent = "◎";
+  dpad.appendChild(centerShipBtn);
+
+  const right = ensureButton(moveRightBtn, "moveRight", "Move Right", "right", "▶");
+  const down = ensureButton(moveDownBtn, "moveDown", "Move Down", "down", "▼");
+
+  centerShipBtn.addEventListener("click", () => { centerShipInView(false); });
+
+  floatingDpadEl = dpad;
+  return { up, left, down, right };
+}
+
+function keepHudFixedPosition() {
+  if (!shipHudEl) return;
+  shipHudEl.style.position = "fixed";
+  shipHudEl.style.top = "16px";
+  shipHudEl.style.right = "16px";
+  shipHudEl.style.left = "auto";
+  shipHudEl.style.bottom = "auto";
+  shipHudEl.style.transform = "none";
+  shipHudEl.style.visibility = "visible";
+}
+
+applyFixedUiStyles();
+ensureShipHud();
+const dpadButtons = buildFloatingDpad();
+
+/** -----------------------------
+ * Master hide/show
+ * ------------------------------ */
+let allUiVisible = true;
+
+function setAllUiVisible(nextVisible) {
+  allUiVisible = Boolean(nextVisible);
+
+  if (controlsPanelEl) {
+    controlsPanelEl.classList.toggle("hidden", !allUiVisible);
+  }
+
+  const allButtons = Array.from(document.querySelectorAll("button"));
+
+  for (const btn of allButtons) {
+    if (!toggleAllUiBtn) continue;
+
+    if (btn === toggleAllUiBtn) {
+      btn.style.display = "";
+      continue;
+    }
+
+    if (
+      btn === moveUpBtn ||
+      btn === moveDownBtn ||
+      btn === moveLeftBtn ||
+      btn === moveRightBtn ||
+      btn === centerShipBtn
+    ) {
+      btn.style.display = "";
+      continue;
+    }
+
+    btn.style.display = allUiVisible ? "" : "none";
+  }
+
+  if (floatingDpadEl) {
+    floatingDpadEl.style.display = "";
+  }
+
+  if (toggleAllUiBtn) {
+    toggleAllUiBtn.style.display = "";
+    toggleAllUiBtn.textContent = allUiVisible ? "Hide Controls" : "Show Controls";
+  }
+}
+
+toggleAllUiBtn?.addEventListener("click", () => setAllUiVisible(!allUiVisible));
+
+/** -----------------------------
+ * D-pad virtual keys
+ * ------------------------------ */
+const virtualKeys = new Set();
+
+function bindHoldButton(el, keyName) {
+  if (!el) return;
+
+  const start = (e) => {
+    e.preventDefault();
+    virtualKeys.add(keyName);
+  };
+
+  const end = (e) => {
+    e.preventDefault();
+    virtualKeys.delete(keyName);
+  };
+
+  el.addEventListener("pointerdown", start, { passive: false });
+  el.addEventListener("pointerup", end, { passive: false });
+  el.addEventListener("pointercancel", end, { passive: false });
+  el.addEventListener("pointerleave", end, { passive: false });
+  el.addEventListener("lostpointercapture", end, { passive: false });
+}
+
+bindHoldButton(dpadButtons.up, "arrowup");
+bindHoldButton(dpadButtons.down, "arrowdown");
+bindHoldButton(dpadButtons.left, "arrowleft");
+bindHoldButton(dpadButtons.right, "arrowright");
+
+/** Default: visible */
+setAllUiVisible(true);
 
 /** -----------------------------
  * Extra buttons
@@ -366,10 +684,8 @@ function buildMaskAndHeightFromImage(img) {
 
     const likelyMapTextOrDash =
       !blueDominant &&
-      (
-        (v < 0.34 && s < 0.50) || // dark text / dark dashed lines
-        (v < 0.42 && b < 150 && r < 170 && g < 170)
-      );
+      ((v < 0.34 && s < 0.50) ||
+        (v < 0.42 && b < 150 && r < 170 && g < 170));
 
     const islandColorLike =
       (s >= 0.12 && v >= 0.18) ||
@@ -503,7 +819,7 @@ globeMaterial.map = texture;
 globeMaterial.needsUpdate = true;
 
 if (texture.image) buildMaskAndHeightFromImage(texture.image);
-setTerrainMode(TerrainMode.MASK);
+setTerrainMode(TerrainMode.HEIGHT);
 
 /** -----------------------------
  * Wave effect
@@ -581,6 +897,10 @@ waveToggleBtn.addEventListener("click", () => {
   if (waveMesh) waveMesh.visible = waveEnabled;
   waveToggleBtn.textContent = waveEnabled ? "Wave Effect: ON" : "Wave Effect: OFF";
 });
+
+waveEnabled = true;
+if (waveMesh) waveMesh.visible = true;
+waveToggleBtn.textContent = "Wave Effect: ON";
 
 /** -----------------------------
  * Labels + markers
@@ -714,7 +1034,9 @@ for (const loc of locations) addMarker(loc);
 /** -----------------------------
  * Label visibility toggle
  * ------------------------------ */
-let labelsVisible = true;
+let labelsVisible = false;
+labelGroup.visible = false;
+if (toggleLabelsBtn) toggleLabelsBtn.textContent = "Show Labels";
 
 toggleLabelsBtn?.addEventListener("click", () => {
   labelsVisible = !labelsVisible;
@@ -1442,10 +1764,10 @@ window.addEventListener("keydown", (e) => keys.add(e.key.toLowerCase()));
 window.addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
 
 function desiredMoveVector() {
-  const up = keys.has("arrowup") || keys.has("w");
-  const down = keys.has("arrowdown") || keys.has("s");
-  const left = keys.has("arrowleft") || keys.has("a");
-  const right = keys.has("arrowright") || keys.has("d");
+  const up = keys.has("arrowup") || keys.has("w") || virtualKeys.has("arrowup");
+  const down = keys.has("arrowdown") || keys.has("s") || virtualKeys.has("arrowdown");
+  const left = keys.has("arrowleft") || keys.has("a") || virtualKeys.has("arrowleft");
+  const right = keys.has("arrowright") || keys.has("d") || virtualKeys.has("arrowright");
 
   const dLat = (up ? 1 : 0) + (down ? -1 : 0);
   const dLng = (right ? 1 : 0) + (left ? -1 : 0);
@@ -1795,10 +2117,13 @@ orientBoat(
   boat.position.clone()
 );
 
+centerShipInView(true);
+
 /** -----------------------------
  * Auto spin + UI hooks
  * ------------------------------ */
-let autoSpin = true;
+let autoSpin = false;
+if (toggleAutoSpinBtn) toggleAutoSpinBtn.textContent = "Resume Spin";
 
 toggleAutoSpinBtn?.addEventListener("click", () => {
   autoSpin = !autoSpin;
@@ -1824,6 +2149,7 @@ function resize() {
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   renderer.setSize(w, h, false);
+  keepHudFixedPosition();
 }
 window.addEventListener("resize", resize);
 resize();
@@ -1853,6 +2179,17 @@ function animate() {
   }
 
   updateBoat(dt);
+  keepHudFixedPosition();
+
+  if (globeGroup.userData.targetQuaternion) {
+    globeGroup.quaternion.slerp(globeGroup.userData.targetQuaternion, 0.18);
+
+    if (globeGroup.quaternion.angleTo(globeGroup.userData.targetQuaternion) < 0.0015) {
+      globeGroup.quaternion.copy(globeGroup.userData.targetQuaternion);
+      globeGroup.userData.targetQuaternion = null;
+      centerShipLerp = 0;
+    }
+  }
 
   controls.update();
   renderer.render(scene, camera);

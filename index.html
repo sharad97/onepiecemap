@@ -1,3 +1,4 @@
+<!-- /index.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -13,16 +14,30 @@
         <h1>Fantasy Globe Explorer</h1>
         <p>Drag to rotate • Scroll/pinch to zoom • Tap markers to explore</p>
       </div>
-
-      <div class="controls">
-        <button id="toggleLabels">Hide Labels</button>
-        <button id="toggleRoutes">Hide Routes</button>
-        <button id="toggleAutoSpin">Pause Spin</button>
-        <button id="resetCamera">Reset View</button>
-      </div>
     </div>
 
     <div id="globe"></div>
+
+    <!-- Ship-following UI: master toggle always visible; panel holds all other buttons -->
+    <div id="shipHud" class="ship-hud" aria-label="Ship Controls">
+      <button id="toggleAllUi" class="ship-hud-main" type="button">Hide Controls</button>
+
+      <div id="controlsPanel" class="ship-hud-panel">
+        <div class="ship-hud-row">
+          <button id="toggleLabels" type="button">Hide Labels</button>
+          <button id="toggleRoutes" type="button">Hide Routes</button>
+          <button id="toggleAutoSpin" type="button">Pause Spin</button>
+          <button id="resetCamera" type="button">Reset View</button>
+        </div>
+
+        <div class="dpad" aria-label="Move Ship">
+          <button id="moveUp" class="dpad-btn up" type="button" aria-label="Move Up">▲</button>
+          <button id="moveLeft" class="dpad-btn left" type="button" aria-label="Move Left">◀</button>
+          <button id="moveDown" class="dpad-btn down" type="button" aria-label="Move Down">▼</button>
+          <button id="moveRight" class="dpad-btn right" type="button" aria-label="Move Right">▶</button>
+        </div>
+      </div>
+    </div>
 
     <div class="legend">
       <div><span class="dot blue"></span>Blue Sea</div>
@@ -31,7 +46,7 @@
     </div>
 
     <div id="infoCard" class="info-card hidden">
-      <button id="closeCard" class="close-btn">×</button>
+      <button id="closeCard" class="close-btn" type="button">×</button>
       <h2 id="cardTitle">Location</h2>
       <p id="cardSubtitle" class="subtitle">Region</p>
       <p id="cardDescription">Tap a marker on the globe to show location details here.</p>

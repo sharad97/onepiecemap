@@ -1,8 +1,10 @@
+/* /style.css */
 * {
   box-sizing: border-box;
 }
 
-html, body {
+html,
+body {
   margin: 0;
   height: 100%;
   background:
@@ -48,11 +50,11 @@ html, body {
 .title-wrap {
   max-width: 560px;
   padding: 14px 16px;
-  border: 1px solid rgba(255,255,255,0.12);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 18px;
   background: rgba(8, 14, 27, 0.68);
   backdrop-filter: blur(12px);
-  box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
 }
 
 .title-wrap h1 {
@@ -77,20 +79,23 @@ html, body {
 
 button {
   appearance: none;
-  border: 1px solid rgba(255,255,255,0.12);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(12, 19, 34, 0.75);
   color: #eef4ff;
   padding: 10px 14px;
   border-radius: 999px;
   cursor: pointer;
   font-size: 14px;
-  transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+  transition:
+    transform 0.15s ease,
+    background 0.15s ease,
+    border-color 0.15s ease;
 }
 
 button:hover {
   transform: translateY(-1px);
   background: rgba(25, 36, 61, 0.9);
-  border-color: rgba(255,255,255,0.2);
+  border-color: rgba(255, 255, 255, 0.2);
 }
 
 .legend {
@@ -104,7 +109,7 @@ button:hover {
   padding: 12px 14px;
   border-radius: 16px;
   background: rgba(8, 14, 27, 0.72);
-  border: 1px solid rgba(255,255,255,0.1);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   color: #dbe6ff;
   font-size: 13px;
 }
@@ -122,21 +127,27 @@ button:hover {
   display: inline-block;
 }
 
-.dot.blue { background: #6fb0ff; }
-.dot.gold { background: #ffcc66; }
-.dot.red { background: #ff6b6b; }
+.dot.blue {
+  background: #6fb0ff;
+}
+.dot.gold {
+  background: #ffcc66;
+}
+.dot.red {
+  background: #ff6b6b;
+}
 
 .info-card {
   position: absolute;
   right: 16px;
   bottom: 18px;
-  z-index: 11;
+  z-index: 20;
   width: min(360px, calc(100vw - 32px));
   padding: 18px 18px 16px 18px;
   border-radius: 20px;
   background: rgba(8, 14, 27, 0.84);
-  border: 1px solid rgba(255,255,255,0.12);
-  box-shadow: 0 12px 32px rgba(0,0,0,0.35);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
   backdrop-filter: blur(12px);
 }
 
@@ -181,7 +192,7 @@ button:hover {
   padding: 10px 14px;
   border-radius: 999px;
   background: rgba(8, 14, 27, 0.68);
-  border: 1px solid rgba(255,255,255,0.08);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   color: #9eb0d4;
   font-size: 12px;
   text-align: center;
@@ -202,6 +213,194 @@ button:hover {
   }
 
   .info-card {
-    bottom: 82px;
+    bottom: 92px;
+  }
+}
+
+/* Fixed HUD (top-right) */
+.ship-hud {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  left: auto;
+  bottom: auto;
+  z-index: 30;
+  pointer-events: none;
+  transform: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  max-width: min(560px, calc(100vw - 32px));
+}
+
+.ship-hud > * {
+  pointer-events: auto;
+}
+
+.ship-hud-main {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(20, 34, 62, 0.82);
+}
+
+.ship-hud-panel {
+  margin-top: 0;
+  padding: 10px;
+  border-radius: 18px;
+  background: rgba(8, 14, 27, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+
+.ship-hud-panel.hidden {
+  display: none;
+}
+
+.ship-hud-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* Old embedded D-pad support, if still present in HTML */
+.dpad {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: 44px 44px 44px;
+  grid-template-rows: 44px 44px 44px;
+  gap: 8px;
+  justify-content: center;
+  align-items: center;
+}
+
+.dpad-btn {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 14px;
+  font-size: 18px;
+  line-height: 1;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.dpad-btn.up {
+  grid-column: 2;
+  grid-row: 1;
+}
+.dpad-btn.left {
+  grid-column: 1;
+  grid-row: 2;
+}
+.dpad-btn.down {
+  grid-column: 2;
+  grid-row: 3;
+}
+.dpad-btn.right {
+  grid-column: 3;
+  grid-row: 2;
+}
+
+/* New floating D-pad */
+#floatingDpad {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 31;
+  pointer-events: auto;
+  display: grid;
+  grid-template-columns: 56px 56px 56px 68px;
+  grid-template-rows: 56px 56px 56px;
+  gap: 8px;
+  justify-content: center;
+  align-items: center;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#floatingDpad .dpad-btn {
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border-radius: 16px;
+  font-size: 20px;
+  line-height: 1;
+  touch-action: none;
+}
+
+#floatingDpad .dpad-empty {
+  width: 56px;
+  height: 56px;
+  pointer-events: none;
+}
+
+#floatingDpad .up {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+#floatingDpad .left {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+#floatingDpad .down {
+  grid-column: 2;
+  grid-row: 3;
+}
+
+#floatingDpad .right {
+  grid-column: 3;
+  grid-row: 2;
+}
+
+#floatingDpad .center-ship {
+  grid-column: 4;
+  grid-row: 2;
+  width: 68px;
+  font-size: 24px;
+}
+
+/* D-pad should never disappear unless you explicitly hide it in JS */
+#floatingDpad.hidden {
+  display: grid !important;
+}
+
+@media (max-width: 900px) {
+  .ship-hud {
+    top: 12px;
+    right: 12px;
+    max-width: calc(100vw - 24px);
+  }
+
+  .ship-hud-panel {
+    padding: 8px;
+  }
+
+  #floatingDpad {
+    bottom: 14px;
+    grid-template-columns: 52px 52px 52px 62px;
+    grid-template-rows: 52px 52px 52px;
+    gap: 7px;
+  }
+
+  #floatingDpad .dpad-btn,
+  #floatingDpad .dpad-empty {
+    width: 52px;
+    height: 52px;
+  }
+
+  #floatingDpad .center-ship {
+    width: 62px;
+    font-size: 22px;
+  }
+
+  .info-card {
+    bottom: 94px;
   }
 }
