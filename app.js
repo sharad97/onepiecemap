@@ -58,16 +58,41 @@ const cardTitleEl = document.getElementById("cardTitle");
 const cardSubtitleEl = document.getElementById("cardSubtitle");
 const cardDescriptionEl = document.getElementById("cardDescription");
 
-function showCard(item) {
+let infoCardTimer = null;
+
+function showCard(item, options = {}) {
   if (!infoCardEl) return;
+
+  const {
+    autoHideMs = 0,
+  } = options;
+
+  if (infoCardTimer) {
+    clearTimeout(infoCardTimer);
+    infoCardTimer = null;
+  }
+
   if (cardTitleEl) cardTitleEl.textContent = item.name ?? "";
   if (cardSubtitleEl) cardSubtitleEl.textContent = item.region ?? "";
   if (cardDescriptionEl) cardDescriptionEl.textContent = item.description ?? "";
+
   infoCardEl.classList.remove("hidden");
+
+  if (autoHideMs > 0) {
+    infoCardTimer = setTimeout(() => {
+      hideCard();
+    }, autoHideMs);
+  }
 }
+
 function hideCard() {
+  if (infoCardTimer) {
+    clearTimeout(infoCardTimer);
+    infoCardTimer = null;
+  }
   infoCardEl?.classList.add("hidden");
 }
+
 closeCardBtn?.addEventListener("click", hideCard);
 
 toggleRoutesBtn?.remove();
@@ -80,24 +105,35 @@ let floatingDpadEl = null;
 let centerShipBtn = null;
 let centerShipLerp = 0;
 
-function centerShipInView(immediate = false) {
+let followShipWhileMoving = true;
+let followShipStrength = 0.12;
+
+function centerShipInView(immediate = false, strength = 0.18) {
   if (!boat || !globeGroup || !camera) return;
 
-  // Ship position in world space
   const shipWorld = new THREE.Vector3();
   boat.getWorldPosition(shipWorld);
 
-  // Direction from globe center to ship
-  const shipDir = shipWorld.clone().normalize();
-  if (shipDir.lengthSq() < 1e-8) return;
+  const shipFlat = shipWorld.clone();
+  shipFlat.y = 0;
+  if (shipFlat.lengthSq() < 1e-8) return;
+  shipFlat.normalize();
 
-  // Direction from globe center toward the camera
-  const cameraDir = camera.position.clone().normalize();
-  if (cameraDir.lengthSq() < 1e-8) return;
+  const camFlat = camera.position.clone();
+  camFlat.y = 0;
+  if (camFlat.lengthSq() < 1e-8) return;
+  camFlat.normalize();
 
-  // Rotate globe so ship faces camera
-  const deltaQuat = new THREE.Quaternion().setFromUnitVectors(shipDir, cameraDir);
-  const targetQuat = deltaQuat.clone().multiply(globeGroup.quaternion);
+  const shipYaw = Math.atan2(shipFlat.x, shipFlat.z);
+  const camYaw = Math.atan2(camFlat.x, camFlat.z);
+  const deltaYaw = camYaw - shipYaw;
+
+  const deltaQuat = new THREE.Quaternion().setFromAxisAngle(
+    new THREE.Vector3(0, 1, 0),
+    deltaYaw
+  );
+
+  const targetQuat = deltaQuat.multiply(globeGroup.quaternion.clone());
 
   if (immediate) {
     globeGroup.quaternion.copy(targetQuat);
@@ -108,7 +144,7 @@ function centerShipInView(immediate = false) {
   }
 
   globeGroup.userData.targetQuaternion = targetQuat;
-  centerShipLerp = 1;
+  centerShipLerp = strength;
 }
 
 function applyFixedUiStyles() {
@@ -499,7 +535,8 @@ function distanceLatLngApprox(aLat, aLng, bLat, bLng) {
 const scene = new THREE.Scene();
 
 const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 200);
-camera.position.set(0, 6.5, 10);
+camera.position.set(0, 0, 10);
+camera.up.set(0, 1, 0);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -537,6 +574,9 @@ scene.add(dirLight);
 
 const globeGroup = new THREE.Group();
 scene.add(globeGroup);
+
+/* Fix map orientation so north is up */
+globeGroup.rotation.y = Math.PI;
 
 /** -----------------------------
  * Globe mesh
@@ -1774,6 +1814,11 @@ function desiredMoveVector() {
   return { dLat, dLng };
 }
 
+function isUserSteeringShip() {
+  const { dLat, dLng } = desiredMoveVector();
+  return dLat !== 0 || dLng !== 0;
+}
+
 function placeBoat(lat, lng) {
   const elev = sampleElevation(lat, lng);
   const pos = latLngToVector3(lat, lng, globeRadius + elev + TERRAIN.boatClearance);
@@ -1817,7 +1862,7 @@ function respawnBoat() {
       name: "Respawned",
       region: spawn.name,
       description: "Your ship restarted outside Calm Belt and outside Grand Line.",
-    });
+    }, { autoHideMs: 2200 });
     return;
   }
 
@@ -1832,7 +1877,7 @@ function respawnBoat() {
     name: "Respawned",
     region: fallback.name,
     description: "Your ship restarted at a safer sea.",
-  });
+  }, { autoHideMs: 2200 });
 }
 
 function handleCalmBeltDeath() {
@@ -2117,7 +2162,9 @@ orientBoat(
   boat.position.clone()
 );
 
-centerShipInView(true);
+// Fixed initial map orientation
+globeGroup.quaternion.setFromEuler(new THREE.Euler(0, Math.PI, 0));
+globeGroup.userData.targetQuaternion = null;
 
 /** -----------------------------
  * Auto spin + UI hooks
@@ -2136,6 +2183,11 @@ zoomOutBtn.addEventListener("click", () => zoomCamera(1.12));
 resetCameraBtn?.addEventListener("click", () => {
   controls.reset();
   camera.position.set(0, 6.5, 10);
+  controls.target.set(0, 0, 0);
+
+  globeGroup.quaternion.setFromEuler(new THREE.Euler(0, Math.PI, 0));
+  globeGroup.userData.targetQuaternion = null;
+
   controls.update();
 });
 
@@ -2163,7 +2215,14 @@ function animate() {
   const dt = Math.min(0.04, (t - lastT) / 1000);
   lastT = t;
 
-  if (autoSpin) globeGroup.rotation.y += dt * 0.14;
+  if (autoSpin && !isUserSteeringShip() && !autoRiverState.active) {
+    globeGroup.quaternion.multiply(
+      new THREE.Quaternion().setFromAxisAngle(
+        new THREE.Vector3(0, 1, 0),
+        dt * 0.14
+      )
+    );
+  }
 
   if (waveMesh && waveEnabled) {
     waveTime += dt;
@@ -2178,11 +2237,17 @@ function animate() {
     child.quaternion.copy(camera.quaternion);
   }
 
+
   updateBoat(dt);
   keepHudFixedPosition();
 
+  if (followShipWhileMoving && isUserSteeringShip() && !autoRiverState.active) {
+    centerShipInView(false, followShipStrength);
+  }
+
   if (globeGroup.userData.targetQuaternion) {
-    globeGroup.quaternion.slerp(globeGroup.userData.targetQuaternion, 0.18);
+    const slerpAmount = Math.max(0.08, centerShipLerp || 0.18);
+    globeGroup.quaternion.slerp(globeGroup.userData.targetQuaternion, slerpAmount);
 
     if (globeGroup.quaternion.angleTo(globeGroup.userData.targetQuaternion) < 0.0015) {
       globeGroup.quaternion.copy(globeGroup.userData.targetQuaternion);
