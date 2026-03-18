@@ -410,8 +410,8 @@ bindHoldButton(dpadButtons.down, "arrowdown");
 bindHoldButton(dpadButtons.left, "arrowleft");
 bindHoldButton(dpadButtons.right, "arrowright");
 
-/** Default: visible */
-setAllUiVisible(true);
+/** Default: hidden */
+setAllUiVisible(false);
 
 /** -----------------------------
  * Extra buttons
@@ -760,6 +760,42 @@ function sampleMask(lat, lng) {
   return landMask[y * texW + x];
 }
 
+function sampleMapColor(lat, lng) {
+  if (!terrainReady || !texture?.image) return null;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = texture.image.width;
+  canvas.height = texture.image.height;
+
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return null;
+
+  ctx.drawImage(texture.image, 0, 0);
+
+  const { u, v } = latLngToUV(lat, lng);
+  const x = clamp(Math.round(u * (canvas.width - 1)), 0, canvas.width - 1);
+  const y = clamp(Math.round(v * (canvas.height - 1)), 0, canvas.height - 1);
+
+  const pixel = ctx.getImageData(x, y, 1, 1).data;
+  return { r: pixel[0], g: pixel[1], b: pixel[2] };
+}
+
+function isCalmBeltWaterAt(lat, lng) {
+  if (!isInsideCalmBelt(lat, 0)) return false;
+  if (sampleMask(lat, lng) === 1) return false;
+
+  const color = sampleMapColor(lat, lng);
+  if (!color) return false;
+
+  const { r, g, b } = color;
+
+  // Calm Belt tends to be lighter / greener / less deep-blue than normal ocean
+  const greenish = g > 95 && b > 95;
+  const notDeepOcean = !(b > r * 1.18 && b > g * 1.18);
+
+  return greenish && notDeepOcean;
+}
+
 function sampleElevation(lat, lng) {
   if (!terrainReady || !heightMap) return 0;
 
@@ -952,8 +988,14 @@ const locations = [
   {
     name: "Reverse Mountain",
     region: "Red Line",
-    uv: { u: 0.50, v: 0.48 },
+    uv: { u: 0.50, v: 0.50 },
     description: "Gateway to the Grand Line.",
+  },
+  {
+    name: "Lodestar Island",
+    region: "New World",
+    uv: { u: 0.44, v: 0.50 }, // adjust if needed to match your map
+    description: "The final island reachable by following the Log Pose.",
   },
 ];
 
@@ -1742,6 +1784,45 @@ boatBubble.visible = false;
 boatBubble.renderOrder = 80;
 boatGroup.add(boatBubble);
 
+/** wake trail behind boat */
+const boatWakeGroup = new THREE.Group();
+boatWakeGroup.renderOrder = 79;
+globeGroup.add(boatWakeGroup);
+
+const boatWakeParticles = [];
+const BOAT_WAKE_MAX = 24;
+
+for (let i = 0; i < BOAT_WAKE_MAX; i++) {
+  const wake = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.075, 0.03),
+    new THREE.MeshBasicMaterial({
+      color: 0xeafcff,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    })
+  );
+
+  wake.visible = false;
+  wake.userData = {
+    life: 0,
+    maxLife: 0.7,
+    driftSide: 0,
+    driftBack: 0,
+    normal: new THREE.Vector3(),
+    tangent: new THREE.Vector3(),
+    bitangent: new THREE.Vector3(),
+    baseScaleX: 1,
+    baseScaleY: 1,
+  };
+
+  boatWakeGroup.add(wake);
+  boatWakeParticles.push(wake);
+}
+
+let boatWakeSpawnTimer = 0;
+
 /** -----------------------------
  * Sea zones
  * ------------------------------ */
@@ -1749,6 +1830,7 @@ const CALM_BELT = {
   enabled: true,
   north: { minLat: 12, maxLat: 27 },
   south: { minLat: -27, maxLat: -12 },
+  killMarginDeg: 7.2, // must be clearly inside before death
 };
 
 const GRAND_LINE = {
@@ -1756,11 +1838,14 @@ const GRAND_LINE = {
   maxLat: 8,
 };
 
-function isInsideCalmBelt(lat) {
+function isInsideCalmBelt(lat, margin = 0) {
   if (!CALM_BELT.enabled) return false;
+
   return (
-    (lat >= CALM_BELT.north.minLat && lat <= CALM_BELT.north.maxLat) ||
-    (lat >= CALM_BELT.south.minLat && lat <= CALM_BELT.south.maxLat)
+    (lat >= CALM_BELT.north.minLat + margin &&
+      lat <= CALM_BELT.north.maxLat - margin) ||
+    (lat >= CALM_BELT.south.minLat + margin &&
+      lat <= CALM_BELT.south.maxLat - margin)
   );
 }
 
@@ -1780,6 +1865,7 @@ const BOAT_RESPAWNS = [
 ];
 
 let calmBeltDeathLock = false;
+let lodestarReachedShown = false;
 
 function getSafeRespawn() {
   for (let i = 0; i < BOAT_RESPAWNS.length; i++) {
@@ -1845,7 +1931,118 @@ function orientBoat(prevPos, nextPos) {
   boatBubble.quaternion.identity();
 }
 
+
+function spawnBoatWake() {
+  const wake = boatWakeParticles.find((p) => !p.visible) || boatWakeParticles[0];
+  if (!wake || !boat) return;
+
+  const boatWorldPos = new THREE.Vector3();
+  boat.getWorldPosition(boatWorldPos);
+
+  const normal = boatWorldPos.clone().normalize();
+
+  const boatForward = new THREE.Vector3(0, 0, 1)
+    .applyQuaternion(boat.quaternion)
+    .normalize();
+
+  const tangentForward = boatForward.clone().projectOnPlane(normal).normalize();
+  if (tangentForward.lengthSq() < 1e-8) return;
+
+  const wakeBack = tangentForward.clone().multiplyScalar(-1);
+  const wakeSide = new THREE.Vector3().crossVectors(normal, wakeBack).normalize();
+
+  const elev = sampleElevation(boatState.lat, boatState.lng);
+  const waterRadius = globeRadius + elev + 0.028;
+
+  const backOffset = 0.16;
+  const sideOffset = (Math.random() * 2 - 1) * 0.018;
+
+  const spawnSurfaceDir = boatWorldPos
+    .clone()
+    .add(wakeBack.clone().multiplyScalar(backOffset))
+    .add(wakeSide.clone().multiplyScalar(sideOffset))
+    .normalize();
+
+  const spawnPosWorld = spawnSurfaceDir.multiplyScalar(waterRadius);
+
+  const localPos = globeGroup.worldToLocal(spawnPosWorld.clone());
+
+  wake.visible = true;
+  wake.position.copy(localPos);
+
+  wake.userData.life = wake.userData.maxLife;
+  wake.userData.driftSide = (Math.random() * 2 - 1) * 0.018;
+  wake.userData.driftBack = 0.055 + Math.random() * 0.025;
+  wake.userData.normal.copy(spawnPosWorld.clone().normalize());
+  wake.userData.tangent.copy(wakeBack);
+  wake.userData.bitangent.copy(wakeSide);
+  wake.userData.baseScaleX = 1;
+  wake.userData.baseScaleY = 1;
+
+  const right = wakeSide.clone().normalize();
+  const up = normal.clone().normalize();
+  const forward = wakeBack.clone().normalize();
+
+  const basis = new THREE.Matrix4().makeBasis(right, up, forward);
+  wake.quaternion.setFromRotationMatrix(basis);
+
+  wake.scale.set(1, 1, 1);
+}
+
+function updateBoatWake(dt) {
+  for (const wake of boatWakeParticles) {
+    if (!wake.visible) continue;
+
+    wake.userData.life -= dt;
+    if (wake.userData.life <= 0) {
+      wake.visible = false;
+      wake.material.opacity = 0;
+      continue;
+    }
+
+    const life01 = wake.userData.life / wake.userData.maxLife;
+    const age = 1 - life01;
+
+    const normal = wake.userData.normal.clone().normalize();
+    const tangent = wake.userData.tangent.clone().normalize();
+    const bitangent = wake.userData.bitangent.clone().normalize();
+
+    const currentWorld = globeGroup.localToWorld(wake.position.clone());
+
+    const movedWorld = currentWorld
+      .clone()
+      .add(tangent.clone().multiplyScalar(wake.userData.driftBack * dt))
+      .add(bitangent.clone().multiplyScalar(wake.userData.driftSide * dt));
+
+    const elev = sampleElevation(
+      vector3ToLatLng(movedWorld).lat,
+      vector3ToLatLng(movedWorld).lng
+    );
+    const waterRadius = globeRadius + elev + 0.026;
+
+    const surfaceWorld = movedWorld.normalize().multiplyScalar(waterRadius);
+    const surfaceLocal = globeGroup.worldToLocal(surfaceWorld.clone());
+    wake.position.copy(surfaceLocal);
+
+    const right = bitangent.clone().normalize();
+    const up = surfaceWorld.clone().normalize();
+    const forward = tangent.clone().normalize();
+
+    const basis = new THREE.Matrix4().makeBasis(right, up, forward);
+    wake.quaternion.setFromRotationMatrix(basis);
+
+    wake.scale.x = 1 + age * 1.8;
+    wake.scale.y = 1 + age * 0.9;
+    wake.material.opacity = Math.max(0, life01 * 0.34);
+  }
+}
+
 function respawnBoat() {
+  for (const wake of boatWakeParticles) {
+    wake.visible = false;
+    wake.material.opacity = 0;
+  }
+
   for (let tries = 0; tries < BOAT_RESPAWNS.length; tries++) {
     boatState.respawnIndex = (boatState.respawnIndex + 1) % BOAT_RESPAWNS.length;
     const spawn = BOAT_RESPAWNS[boatState.respawnIndex];
@@ -1906,7 +2103,10 @@ const ROUTE6 = {
   triggerRadiusDeg: 2.5,
   durationSec: 6.0,
   liftHeight: 0.22,
+  releaseRadiusDeg: 4.5,
 };
+
+let route6LastArrivalIndex = -1;
 
 const autoRiverState = {
   active: false,
@@ -1949,7 +2149,7 @@ function beginReverseMountainRoute(routeKey) {
   });
 }
 
-function beginRoute6() {
+function beginRoute6(fromIndex = 0, toIndex = 1) {
   const routePoints = reversePathData["6"];
   if (!routePoints || routePoints.length < 2) return;
 
@@ -1959,15 +2159,20 @@ function beginRoute6() {
   autoRiverState.nodeIndex = 0;
   autoRiverState.type = "route6";
   autoRiverState.route6Progress = 0;
-  autoRiverState.route6Start = { ...routePoints[0] };
-  autoRiverState.route6End = { ...routePoints[1] };
+  autoRiverState.route6Start = { ...routePoints[fromIndex] };
+  autoRiverState.route6End = { ...routePoints[toIndex] };
+  autoRiverState.route6FromIndex = fromIndex;
+  autoRiverState.route6ToIndex = toIndex;
 
   boatBubble.visible = true;
 
   showCard({
     name: "Route 6",
     region: "Bubble Animation",
-    description: "Ship surrounded by the bubble travels to Fish-man Island then to New World.",
+    description:
+      fromIndex === 0
+        ? "Ship surrounded by the bubble travels from point 0 to point 1."
+        : "Ship surrounded by the bubble travels from point 1 back to point 0.",
   });
 }
 
@@ -1980,6 +2185,8 @@ function endAutoRoute() {
   autoRiverState.route6Progress = 0;
   autoRiverState.route6Start = null;
   autoRiverState.route6End = null;
+  autoRiverState.route6FromIndex = null;
+  autoRiverState.route6ToIndex = null;
   boatBubble.visible = false;
   boatBubble.scale.setScalar(1);
   hideCard();
@@ -2008,16 +2215,36 @@ function tryTriggerRouteFromDrawnPaths() {
 
   const route6Pts = reversePathData["6"];
   if (route6Pts && route6Pts.length >= 2) {
-    const start = route6Pts[0];
-    const dist6 = distanceLatLngApprox(
+    const point0 = route6Pts[0];
+    const point1 = route6Pts[1];
+
+    const distTo0 = distanceLatLngApprox(
       boatState.lat,
       boatState.lng,
-      start.lat,
-      start.lng
+      point0.lat,
+      point0.lng
+    );
+    const distTo1 = distanceLatLngApprox(
+      boatState.lat,
+      boatState.lng,
+      point1.lat,
+      point1.lng
     );
 
-    if (dist6 <= ROUTE6.triggerRadiusDeg) {
-      beginRoute6();
+    if (route6LastArrivalIndex === 0 && distTo0 > ROUTE6.releaseRadiusDeg) {
+      route6LastArrivalIndex = -1;
+    } else if (route6LastArrivalIndex === 1 && distTo1 > ROUTE6.releaseRadiusDeg) {
+      route6LastArrivalIndex = -1;
+    }
+
+    if (distTo0 <= ROUTE6.triggerRadiusDeg && route6LastArrivalIndex !== 0) {
+      beginRoute6(0, 1);
+      return;
+    }
+
+    if (distTo1 <= ROUTE6.triggerRadiusDeg && route6LastArrivalIndex !== 1) {
+      beginRoute6(1, 0);
+      return;
     }
   }
 }
@@ -2061,6 +2288,12 @@ function updateReverseMountainAuto(dt) {
   const nextPos = placeBoat(boatState.lat, boatState.lng);
   orientBoat(prevPos, nextPos);
 
+  boatWakeSpawnTimer -= dt;
+  if (boatWakeSpawnTimer <= 0) {
+    spawnBoatWake();
+    boatWakeSpawnTimer = 0.035;
+  }
+
   return true;
 }
 
@@ -2100,6 +2333,7 @@ function updateRoute6BubbleAuto(dt) {
     const finalPos = placeBoat(boatState.lat, boatState.lng);
     orientBoat(prevPos, finalPos);
 
+    route6LastArrivalIndex = autoRiverState.route6ToIndex ?? -1;
     endAutoRoute();
   }
 
@@ -2118,6 +2352,49 @@ function updateActiveAutoRoute(dt) {
   }
 
   return false;
+}
+
+function findLodestarLocation() {
+  return locations.find(
+    (loc) =>
+      typeof loc.name === "string" &&
+      loc.name.toLowerCase().includes("lodestar")
+  );
+}
+
+function checkLodestarArrival() {
+  const lodestar = findLodestarLocation();
+  if (!lodestar) return;
+
+  ensureLatLng(lodestar);
+
+  const dist = distanceLatLngApprox(
+    boatState.lat,
+    boatState.lng,
+    lodestar.lat,
+    lodestar.lng
+  );
+
+  const reachThresholdDeg = 2.2;
+  const resetThresholdDeg = 3.5;
+
+  if (!lodestarReachedShown && dist <= reachThresholdDeg) {
+    lodestarReachedShown = true;
+
+    showCard(
+      {
+        name: "Lodestar Island",
+        region: "End of the Log Pose",
+        description:
+          "You have reached the end of the Log Pose! But the journey is not over. To find the One Piece, you must now discover the hidden path to Laugh Tale.",
+      },
+      { autoHideMs: 7000 }
+    );
+  }
+
+  if (lodestarReachedShown && dist > resetThresholdDeg) {
+    lodestarReachedShown = false;
+  }
 }
 
 function updateBoat(dt) {
@@ -2139,7 +2416,15 @@ function updateBoat(dt) {
   const nextLat = clamp(boatState.lat + dLat * step, -85, 85);
   const nextLng = wrapLng(boatState.lng + dLng * step);
 
-  if (isInsideCalmBelt(nextLat)) {
+  const currentlyInsideCalmBelt =
+    isInsideCalmBelt(boatState.lat, CALM_BELT.killMarginDeg) &&
+    isCalmBeltWaterAt(boatState.lat, boatState.lng);
+
+  const nextInsideCalmBelt =
+    isInsideCalmBelt(nextLat, CALM_BELT.killMarginDeg) &&
+    isCalmBeltWaterAt(nextLat, nextLng);
+
+  if (!currentlyInsideCalmBelt && nextInsideCalmBelt) {
     handleCalmBeltDeath();
     return;
   }
@@ -2151,6 +2436,12 @@ function updateBoat(dt) {
     boatState.lng = nextLng;
     const nextPos = placeBoat(boatState.lat, boatState.lng);
     orientBoat(prevPos, nextPos);
+
+    boatWakeSpawnTimer -= dt;
+    if (boatWakeSpawnTimer <= 0) {
+      spawnBoatWake();
+      boatWakeSpawnTimer = 0.03;
+    }
   } else {
     placeBoat(boatState.lat, boatState.lng);
   }
@@ -2239,6 +2530,8 @@ function animate() {
 
 
   updateBoat(dt);
+  checkLodestarArrival();
+  updateBoatWake(dt);
   keepHudFixedPosition();
 
   if (followShipWhileMoving && isUserSteeringShip() && !autoRiverState.active) {
